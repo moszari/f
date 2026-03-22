@@ -3,14 +3,10 @@ name: CI
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */2 * * *"   # раз в 2 часа
+    - cron: "*/30 * * * *"   # каждые 30 минут
 
 permissions:
   contents: read
-
-concurrency:
-  group: ci-chain
-  cancel-in-progress: true
 
 jobs:
   build:
@@ -32,9 +28,9 @@ jobs:
           path: |
             hits.zip
             state.zip
-          key: zip-cache-v4   # обновили ключ
+          key: zip-cache-v5
 
-      # ⬇️ скачивание только при отсутствии кэша
+      # ⬇️ скачивание только если нет кэша
       - name: Download main package
         if: steps.cache-zip.outputs.cache-hit != 'true'
         run: |
@@ -82,8 +78,8 @@ jobs:
 
           Remove-Item $tmp -Recurse -Force
 
-      # ▶️ Запуск (без демона)
-      - name: Run app (limited time)
+      # ▶️ Запуск
+      - name: Run app (safe mode)
         run: |
           $exe = Get-ChildItem C:\9Hits -Recurse -Filter "9hits.exe" | Select-Object -First 1
 
@@ -93,19 +89,30 @@ jobs:
           }
 
           $exePath = $exe.FullName
-
           Write-Host "Starting 9hits..."
+
           $proc = Start-Process $exePath -PassThru
 
-          # ⏱️ ~55 минут + небольшой рандом
-          $base = 3300
+          # ⏱️ 45–55 минут (меньше чем 30+30 overlap)
+          $base = 2700   # 45 мин
           $random = Get-Random -Minimum 0 -Maximum 600
           $sleepTime = $base + $random
 
           Write-Host "Running for $sleepTime seconds"
-          Start-Sleep $sleepTime
 
-          # 🛑 корректное завершение
+          $elapsed = 0
+
+          while ($elapsed -lt $sleepTime) {
+            Start-Sleep 30
+            $elapsed += 30
+
+            if ($proc.HasExited) {
+              Write-Host "Process exited early"
+              break
+            }
+          }
+
+          # 🛑 завершение
           if (!$proc.HasExited) {
             Write-Host "Stopping..."
 
@@ -119,6 +126,7 @@ jobs:
             }
           }
 
+      # 📊 Статистика
       - name: Resource usage summary
         if: always()
         run: |
